@@ -1,5 +1,17 @@
 package com.rork.plcpanelstudio.ui.navigation
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GridView
@@ -16,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -43,6 +56,65 @@ private val TABS = listOf(
     TabItem("devices", "Devices", Icons.Default.Memory)
 )
 
+private const val TAB_MS = 300
+private const val PAGE_MS = 340
+
+private fun tabIndex(route: String?): Int = TABS.indexOfFirst { it.route == route }
+
+/** +1 / -1 when moving between two tabs to the right / left, 0 for any other kind of move. */
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.tabDirection(): Int {
+    val from = tabIndex(initialState.destination.route)
+    val to = tabIndex(targetState.destination.route)
+    return if (from >= 0 && to >= 0) (if (to > from) 1 else -1) else 0
+}
+
+// Switching tabs: the old page fades out quickly while the new one slides in a little and fades in,
+// in the direction of the tab. Opening a page (Monitor, Editor) slides it in from the right over the
+// previous page, which moves away slightly; going back does the reverse.
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.pageEnter(): EnterTransition {
+    val direction = tabDirection()
+    return if (direction != 0) {
+        slideInHorizontally(tween(TAB_MS, easing = FastOutSlowInEasing)) { it / 8 * direction } +
+            fadeIn(tween(TAB_MS, delayMillis = 90))
+    } else {
+        slideInHorizontally(tween(PAGE_MS, easing = FastOutSlowInEasing)) { it / 3 } +
+            fadeIn(tween(PAGE_MS))
+    }
+}
+
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.pageExit(): ExitTransition {
+    val direction = tabDirection()
+    return if (direction != 0) {
+        slideOutHorizontally(tween(TAB_MS, easing = FastOutSlowInEasing)) { -it / 8 * direction } +
+            fadeOut(tween(150))
+    } else {
+        slideOutHorizontally(tween(PAGE_MS, easing = FastOutSlowInEasing)) { -it / 6 } +
+            fadeOut(tween(PAGE_MS))
+    }
+}
+
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.pagePopEnter(): EnterTransition {
+    val direction = tabDirection()
+    return if (direction != 0) {
+        slideInHorizontally(tween(TAB_MS, easing = FastOutSlowInEasing)) { it / 8 * direction } +
+            fadeIn(tween(TAB_MS, delayMillis = 90))
+    } else {
+        slideInHorizontally(tween(PAGE_MS, easing = FastOutSlowInEasing)) { -it / 6 } +
+            fadeIn(tween(PAGE_MS))
+    }
+}
+
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.pagePopExit(): ExitTransition {
+    val direction = tabDirection()
+    return if (direction != 0) {
+        slideOutHorizontally(tween(TAB_MS, easing = FastOutSlowInEasing)) { -it / 8 * direction } +
+            fadeOut(tween(150))
+    } else {
+        slideOutHorizontally(tween(PAGE_MS, easing = FastOutSlowInEasing)) { it / 3 } +
+            fadeOut(tween(PAGE_MS))
+    }
+}
+
 @Composable
 fun AppNavigation() {
     val navController = rememberNavController()
@@ -53,7 +125,11 @@ fun AppNavigation() {
     Scaffold(
         containerColor = Ink,
         bottomBar = {
-            if (showTabBar) {
+            AnimatedVisibility(
+                visible = showTabBar,
+                enter = slideInVertically(tween(280)) { it } + fadeIn(tween(280)),
+                exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(220))
+            ) {
                 NavigationBar(containerColor = Ink, tonalElevation = 0.dp) {
                     TABS.forEach { tab ->
                         val selected = backStackEntry?.destination?.hierarchy?.any {
@@ -88,7 +164,11 @@ fun AppNavigation() {
         NavHost(
             navController = navController,
             startDestination = "panels",
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            enterTransition = { pageEnter() },
+            exitTransition = { pageExit() },
+            popEnterTransition = { pagePopEnter() },
+            popExitTransition = { pagePopExit() }
         ) {
             composable("panels") {
                 PanelsScreen(

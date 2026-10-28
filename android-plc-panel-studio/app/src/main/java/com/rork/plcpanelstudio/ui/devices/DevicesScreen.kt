@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rork.plcpanelstudio.data.DeviceStatus
+import com.rork.plcpanelstudio.ui.components.ScreenTitle
 import com.rork.plcpanelstudio.data.EndpointParser
 import com.rork.plcpanelstudio.data.PlcDevice
 import com.rork.plcpanelstudio.data.connectionHint
@@ -107,7 +108,7 @@ fun DevicesScreen(
         containerColor = Ink,
         topBar = {
             TopAppBar(
-                title = { Text("Devices", style = MaterialTheme.typography.headlineMedium) },
+                title = { ScreenTitle("Devices") },
                 actions = {
                     IconButton(onClick = { viewModel.refreshAll() }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh all")

@@ -1,6 +1,10 @@
 package com.rork.plcpanelstudio.ui.iostatus
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,9 +27,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -42,6 +50,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -49,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,7 +71,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rork.plcpanelstudio.data.DeviceStatus
 import com.rork.plcpanelstudio.data.IoGroup
 import com.rork.plcpanelstudio.data.IoRow
+import com.rork.plcpanelstudio.data.describeForced
 import com.rork.plcpanelstudio.data.filterTagBody
+import com.rork.plcpanelstudio.ui.components.ScreenTitle
+import com.rork.plcpanelstudio.ui.monitor.PasswordDialog
+import com.rork.plcpanelstudio.ui.monitor.PasswordDialogMode
 import com.rork.plcpanelstudio.ui.theme.Ink
 import com.rork.plcpanelstudio.ui.theme.Line
 import com.rork.plcpanelstudio.ui.theme.LineBright
@@ -94,18 +108,87 @@ fun IoStatusScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
+    var passwordDialog by remember { mutableStateOf<PasswordDialogMode?>(null) }
+    var lockMenuOpen by remember { mutableStateOf(false) }
+    var forceAddress by remember { mutableStateOf<String?>(null) }
+    var pendingForce by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+
+    /** Asks for the password (or to create one on first use). */
+    fun requestUnlock() {
+        passwordDialog = if (state.hasControlPassword) PasswordDialogMode.UNLOCK else PasswordDialogMode.CREATE
+    }
+
+    /** Starts forcing an output; when the controls are locked the password is asked for first. */
+    fun requestForce(address: String) {
+        if (state.controlUnlocked) {
+            forceAddress = address
+        } else {
+            pendingForce = address
+            requestUnlock()
+        }
+    }
 
     // Read from the PLC only while this screen is showing.
     LaunchedEffect(Unit) { viewModel.start() }
     LifecycleEventEffect(Lifecycle.Event.ON_START) { viewModel.start() }
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.stop() }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { viewModel.stop() } }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        viewModel.stop()
+        // Sending the app to the background releases every force and locks the controls again
+        // (turning the phone does not).
+        if (context.findActivity()?.isChangingConfigurations != true) viewModel.leaveScreen()
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            viewModel.stop()
+            if (context.findActivity()?.isChangingConfigurations != true) viewModel.leaveScreen()
+        }
+    }
 
     Scaffold(
         containerColor = Ink,
         topBar = {
             TopAppBar(
-                title = { Text("I/O Status", style = MaterialTheme.typography.headlineMedium) },
+                title = { ScreenTitle("I/O Status") },
+                actions = {
+                    Box {
+                        IconButton(
+                            onClick = {
+                                if (state.controlUnlocked) {
+                                    lockMenuOpen = true
+                                } else {
+                                    pendingForce = null
+                                    requestUnlock()
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = if (state.controlUnlocked) Icons.Default.LockOpen else Icons.Default.Lock,
+                                contentDescription = if (state.controlUnlocked) "Forcing unlocked" else "Forcing locked",
+                                tint = if (state.controlUnlocked) SignalTeal else TextMid
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = lockMenuOpen,
+                            onDismissRequest = { lockMenuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Lock controls") },
+                                onClick = {
+                                    lockMenuOpen = false
+                                    viewModel.lockControl()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Change password") },
+                                onClick = {
+                                    lockMenuOpen = false
+                                    passwordDialog = PasswordDialogMode.CHANGE
+                                }
+                            )
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Ink)
             )
         }
@@ -157,6 +240,11 @@ fun IoStatusScreen(
                     Spacer(Modifier.height(4.dp))
                     SummaryCard(state)
                 }
+                if (state.forced.isNotEmpty()) {
+                    item(key = "forced-banner") {
+                        ForcedBanner(forced = state.forced, onReleaseAll = { viewModel.releaseAllForces() })
+                    }
+                }
 
                 for (group in IoGroup.entries) {
                     val rows = state.sections.rowsOf(group)
@@ -167,6 +255,16 @@ fun IoStatusScreen(
                             count = rows.size,
                             onAdd = if (group == IoGroup.MEMORY) ({ showAdd = true }) else null
                         )
+                    }
+                    if (group == IoGroup.OUTPUTS && rows.isNotEmpty()) {
+                        item(key = "hint-outputs") {
+                            Text(
+                                text = "Tap an output to force it on or off. Forcing needs the password.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextLow,
+                                modifier = Modifier.padding(start = 2.dp)
+                            )
+                        }
                     }
                     if (rows.isEmpty()) {
                         item(key = "empty-${group.name}") {
@@ -185,7 +283,8 @@ fun IoStatusScreen(
                         items(rows, key = { it.address }) { row ->
                             IoRowItem(
                                 row = row,
-                                onRemove = if (row.removable) ({ viewModel.removeMemory(row.address) }) else null
+                                onRemove = if (row.removable) ({ viewModel.removeMemory(row.address) }) else null,
+                                onClick = if (row.forceable) ({ requestForce(row.address) }) else null
                             )
                         }
                     }
@@ -200,6 +299,56 @@ fun IoStatusScreen(
             onAdd = { body, name -> viewModel.addMemory(body, name) }
         )
     }
+
+    passwordDialog?.let { mode ->
+        key(mode) {
+            PasswordDialog(
+                mode = mode,
+                onDismiss = {
+                    passwordDialog = null
+                    pendingForce = null
+                },
+                onSubmit = { current, new, confirm ->
+                    val problem = when (mode) {
+                        PasswordDialogMode.UNLOCK -> viewModel.unlockControl(current)
+                        PasswordDialogMode.CREATE -> viewModel.createControlPassword(new, confirm)
+                        PasswordDialogMode.CHANGE -> viewModel.changeControlPassword(current, new, confirm)
+                    }
+                    // Unlocked to force an output: carry on straight to the force dialog.
+                    if (problem == null && mode != PasswordDialogMode.CHANGE && pendingForce != null) {
+                        forceAddress = pendingForce
+                        pendingForce = null
+                    }
+                    problem
+                },
+                onWantChange = if (mode == PasswordDialogMode.UNLOCK) {
+                    ({ passwordDialog = PasswordDialogMode.CHANGE })
+                } else null
+            )
+        }
+    }
+
+    forceAddress?.let { address ->
+        val row = state.sections.outputs.firstOrNull { it.address == address }
+        if (row != null) {
+            ForceOutputDialog(
+                row = row,
+                onDismiss = { forceAddress = null },
+                onForce = { value -> viewModel.forceOutput(address, value) },
+                onRelease = {
+                    viewModel.releaseForce(address)
+                    forceAddress = null
+                }
+            )
+        }
+    }
+}
+
+/** The Activity behind a Compose [Context], or null. */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 @Composable
@@ -285,7 +434,7 @@ private fun SectionHeader(group: IoGroup, count: Int, onAdd: (() -> Unit)?) {
 }
 
 @Composable
-private fun IoRowItem(row: IoRow, onRemove: (() -> Unit)?) {
+private fun IoRowItem(row: IoRow, onRemove: (() -> Unit)?, onClick: (() -> Unit)? = null) {
     val known = row.value != null
     val on = (row.value ?: 0) > 0
     val color = groupColor(row.group)
@@ -293,8 +442,18 @@ private fun IoRowItem(row: IoRow, onRemove: (() -> Unit)?) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .background(Surface2)
-            .border(1.dp, if (on) color.copy(alpha = 0.55f) else Line, RoundedCornerShape(12.dp))
+            .border(
+                width = if (row.forced != null) 1.5.dp else 1.dp,
+                color = when {
+                    row.overridden -> SignalRed
+                    row.forced != null -> SignalOrange
+                    on -> color.copy(alpha = 0.55f)
+                    else -> Line
+                },
+                shape = RoundedCornerShape(12.dp)
+            )
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -322,6 +481,19 @@ private fun IoRowItem(row: IoRow, onRemove: (() -> Unit)?) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            row.forced?.let { forcedValue ->
+                val forcedText = if (forcedValue > 0) "FORCED ON" else "FORCED OFF"
+                Text(
+                    text = if (row.overridden) "$forcedText  ·  PLC reads ${row.value}" else forcedText,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = MonoFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    color = if (row.overridden) SignalRed else SignalOrange,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
         Text(
             text = when {
@@ -412,6 +584,95 @@ private fun AddMemoryDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel", color = SignalOrange) }
+        }
+    )
+}
+
+/** Shown above the lists while any output is forced, so a force is never forgotten. */
+@Composable
+private fun ForcedBanner(forced: Map<String, Int>, onReleaseAll: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(SignalOrange.copy(alpha = 0.12f))
+            .border(1.dp, SignalOrange.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+            .padding(start = 14.dp, top = 8.dp, end = 6.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("OUTPUTS FORCED", style = NameplateStyle, color = SignalOrange)
+            Text(
+                text = describeForced(forced),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = MonoFamily,
+                color = TextHi
+            )
+            Text(
+                text = "Held while this screen is open. Leaving it releases them.",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextMid
+            )
+        }
+        TextButton(onClick = onReleaseAll) { Text("Release all", color = SignalOrange) }
+    }
+}
+
+@Composable
+private fun ForceOutputDialog(
+    row: IoRow,
+    onDismiss: () -> Unit,
+    onForce: (Int) -> String?,
+    onRelease: () -> Unit
+) {
+    var error by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Surface2,
+        title = { Text("Force ${row.address}") },
+        text = {
+            Column {
+                if (row.name.isNotBlank()) {
+                    Text(row.name, style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                }
+                Text(
+                    "Writes directly to ${row.address} and keeps writing it while this screen is open. " +
+                        "If the PLC's own program keeps driving this output, it may fight the forced " +
+                        "value; the row then turns red and shows what the PLC reads.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextMid
+                )
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = {
+                            val problem = onForce(1)
+                            if (problem == null) onDismiss() else error = problem
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = SignalOrange, contentColor = Ink)
+                    ) { Text("Force ON", fontWeight = FontWeight.Bold) }
+                    Button(
+                        onClick = {
+                            val problem = onForce(0)
+                            if (problem == null) onDismiss() else error = problem
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = TextHi)
+                    ) { Text("Force OFF") }
+                }
+                if (row.forced != null) {
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = onRelease) { Text("Release force", color = TextMid) }
+                }
+                error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = SignalRed)
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = TextMid) }
         }
     )
 }

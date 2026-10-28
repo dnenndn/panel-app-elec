@@ -20,8 +20,16 @@ data class IoRow(
     val group: IoGroup,
     val value: Int?,
     /** True for memory bits added by hand; those can be taken off the list again. */
-    val removable: Boolean
-)
+    val removable: Boolean,
+    /** The value this output is being forced to (0 or 1), or null when it is not forced. */
+    val forced: Int? = null
+) {
+    /** Only outputs (Q) can be forced from the I/O view. */
+    val forceable: Boolean get() = group == IoGroup.OUTPUTS
+
+    /** True when the PLC reports something else than the forced value (its program overrides it). */
+    val overridden: Boolean get() = forced != null && value != null && value != forced
+}
 
 /** Every tag of a panel, split into the three blocks and sorted by address. */
 data class IoSections(
@@ -50,7 +58,12 @@ data class IoSections(
  * area letter (I, Q, M); a tag without a known letter falls back to its part's direction.
  * A selector with one input per position gives one row per position. Each address appears once.
  */
-fun buildIoSections(panel: Panel, values: Map<String, Int>): IoSections {
+fun buildIoSections(
+    panel: Panel,
+    values: Map<String, Int>,
+    /** Outputs currently being forced, address -> forced value. */
+    forced: Map<String, Int> = emptyMap()
+): IoSections {
     val inputs = mutableListOf<IoRow>()
     val outputs = mutableListOf<IoRow>()
     val memory = mutableListOf<IoRow>()
@@ -65,7 +78,7 @@ fun buildIoSections(panel: Panel, values: Map<String, Int>): IoSections {
             TagArea.MEMORY -> IoGroup.MEMORY
             null -> fallback
         }
-        val row = IoRow(address, name, kind, group, values[address], removable)
+        val row = IoRow(address, name, kind, group, values[address], removable, forced[address])
         when (group) {
             IoGroup.INPUTS -> inputs += row
             IoGroup.OUTPUTS -> outputs += row
@@ -116,3 +129,11 @@ fun checkMemoryBit(body: String, panel: Panel): MemoryCheck {
     }
     return MemoryCheck.Ok(address)
 }
+
+/** True when [address] is one of the outputs of [panel]: the only tags that may be forced. */
+fun canForceOutput(panel: Panel, address: String): Boolean =
+    buildIoSections(panel, emptyMap()).outputs.any { it.address == address }
+
+/** Short text for the "forced" banner, e.g. "Q0.1 = ON · Q0.2 = OFF". */
+fun describeForced(forced: Map<String, Int>): String =
+    forced.entries.joinToString(" · ") { "${it.key} = ${if (it.value > 0) "ON" else "OFF"}" }

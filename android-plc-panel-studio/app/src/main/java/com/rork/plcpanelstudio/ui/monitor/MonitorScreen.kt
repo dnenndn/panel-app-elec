@@ -241,6 +241,7 @@ fun MonitorScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = inner.calculateTopPadding())
+                .navigationBarsPadding()
         ) {
             Box(
                 modifier = Modifier
@@ -311,11 +312,6 @@ fun MonitorScreen(
                     }
                 }
             }
-
-            IoStatesPanel(
-                state = state,
-                modifier = Modifier.fillMaxWidth()
-            )
         }
     }
 }
@@ -351,17 +347,9 @@ private fun LiveComponent(
         else -> value.coerceIn(0, positionCount - 1)
     }
     val active = if (multiSelector) activePositionIndex >= 0 else value > 0
-    val caption = when {
-        !wired -> "NO TAG"
-        multiSelector -> {
-            val address = component.positionAddress(shownSelectorPosition)
-            "POS ${shownSelectorPosition + 1}" + if (address.isNotBlank()) " · $address" else ""
-        }
-        component.kind == ComponentKind.SELECTOR && component.positions >= 3 -> "POS ${value + 1}"
-        component.kind == ComponentKind.SELECTOR -> if (value > 0) "AUTO" else "MANUAL"
-        component.direction == IoDirection.INPUT -> if (active) "ACTIVE" else "INACTIVE"
-        else -> if (active) "ON" else "OFF"
-    }
+    // Under each item: its address, like the editor shows it (I3.2, Q0.1; a selector lists all its
+    // position inputs). The item's glow and the lit address show its state.
+    val caption = component.tagSummary.ifBlank { "NO TAG" }
 
     // The knob turns on touch (drag to rotate, tap to step). Without a tag it just turns
     // locally; with tags the new position is written to the PLC.
@@ -492,132 +480,6 @@ private fun ForceOutputDialog(
         }
     )
 }
-
-@Composable
-private fun IoStatesPanel(
-    state: MonitorUiState,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-            .background(Surface1)
-            .border(
-                1.dp,
-                Line,
-                RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
-            )
-            .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterHorizontally)
-                .width(36.dp)
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(Line)
-        )
-        Spacer(Modifier.height(10.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("I/O States", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    text = state.device?.let { "Live values from ${it.name}" } ?: "No PLC linked",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextMid
-                )
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = state.lastUpdateMillis?.let { formatClock(it) } ?: "—",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextMid,
-                    fontFamily = MonoFamily
-                )
-                StatusRow(
-                    color = if (state.live) SignalTeal else statusColor(DeviceStatus.OFFLINE),
-                    text = if (state.live) "Live · ${state.pingMs ?: 0}ms" else "Paused"
-                )
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-
-        if (state.readings.isEmpty()) {
-            Text(
-                state.error ?: "Assign tag addresses in the editor to see live values.",
-                style = MaterialTheme.typography.bodySmall,
-                color = TextLow,
-                modifier = Modifier.padding(vertical = 12.dp)
-            )
-        } else {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(bottom = 4.dp)
-            ) {
-                state.readings.take(6).forEach { reading ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Surface2)
-                            .border(1.dp, Line, RoundedCornerShape(10.dp))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = reading.address,
-                            fontFamily = MonoFamily,
-                            fontSize = 14.sp,
-                            color = TextHi,
-                            modifier = Modifier.width(64.dp)
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = reading.label,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = reading.direction.displayName.uppercase(),
-                                style = NameplateStyle,
-                                fontSize = 9.sp,
-                                color = TextLow
-                            )
-                        }
-                        Text(
-                            text = reading.value.toString(),
-                            fontFamily = MonoFamily,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (reading.value > 0) SignalOrange else TextLow
-                        )
-                    }
-                }
-                if (state.readings.size > 6) {
-                    Text(
-                        "+${state.readings.size - 6} more tags",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextLow
-                    )
-                }
-            }
-        }
-        if (state.error != null && state.readings.isNotEmpty()) {
-            Text(
-                text = state.error,
-                style = MaterialTheme.typography.bodySmall,
-                color = SignalRed,
-                modifier = Modifier.padding(top = 6.dp)
-            )
-        }
-    }
-}
-
-private fun formatClock(millis: Long): String =
-    "Today, " + SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(millis))
 
 /** The Activity behind a Compose [Context], or null. */
 private tailrec fun Context.findActivity(): Activity? = when (this) {

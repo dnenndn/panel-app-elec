@@ -135,4 +135,43 @@ class IoStatusTest {
         assertTrue(checkMemoryBit("2.0", panel(listOf(legacyPart))) is MemoryCheck.Error)
         assertEquals(MemoryCheck.Ok("M0.6"), checkMemoryBit("0.6", withWatch))
     }
+
+    // ---------------------------------------------------------------- forcing outputs
+
+    @Test
+    fun onlyOutputsCanBeForced() {
+        val p = panel(listOf(start, run, fault), listOf(WatchedTag("M0.5")))
+        assertTrue(canForceOutput(p, "Q0.1"))
+        assertTrue(canForceOutput(p, "Q0.2"))
+        assertFalse(canForceOutput(p, "I0.3"))     // an input
+        assertFalse(canForceOutput(p, "M0.5"))     // a memory bit
+        assertFalse(canForceOutput(p, "Q9.9"))     // not on this panel
+        assertTrue(buildIoSections(p, emptyMap()).outputs.all { it.forceable })
+        assertTrue(buildIoSections(p, emptyMap()).inputs.none { it.forceable })
+    }
+
+    @Test
+    fun forcedValue_isShownOnItsRow() {
+        val s = buildIoSections(panel(listOf(run, fault)), mapOf("Q0.1" to 1, "Q0.2" to 0), forced = mapOf("Q0.1" to 1))
+        assertEquals(1, s.outputs[0].forced)
+        assertNull(s.outputs[1].forced)
+        assertFalse(s.outputs[0].overridden)       // the PLC agrees with the force
+    }
+
+    @Test
+    fun aForceTheProgramFightsIsFlaggedAsOverridden() {
+        val s = buildIoSections(panel(listOf(run)), mapOf("Q0.1" to 0), forced = mapOf("Q0.1" to 1))
+        assertTrue(s.outputs[0].overridden)        // forced ON but the PLC reads 0
+        val unknown = buildIoSections(panel(listOf(run)), emptyMap(), forced = mapOf("Q0.1" to 1))
+        assertFalse(unknown.outputs[0].overridden) // not answered yet: cannot tell
+        val notForced = buildIoSections(panel(listOf(run)), mapOf("Q0.1" to 0))
+        assertFalse(notForced.outputs[0].overridden)
+    }
+
+    @Test
+    fun forcedBanner_textListsEveryForcedOutput() {
+        assertEquals("", describeForced(emptyMap()))
+        assertEquals("Q0.1 = ON", describeForced(mapOf("Q0.1" to 1)))
+        assertEquals("Q0.1 = ON · Q0.2 = OFF", describeForced(linkedMapOf("Q0.1" to 1, "Q0.2" to 0)))
+    }
 }

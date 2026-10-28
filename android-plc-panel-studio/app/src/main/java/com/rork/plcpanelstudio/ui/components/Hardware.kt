@@ -64,6 +64,7 @@ import com.rork.plcpanelstudio.data.ComponentKind
 import com.rork.plcpanelstudio.ui.theme.Line
 import com.rork.plcpanelstudio.ui.theme.LineBright
 import com.rork.plcpanelstudio.ui.theme.NameplateStyle
+import com.rork.plcpanelstudio.ui.theme.MonoFamily
 import com.rork.plcpanelstudio.ui.theme.SignalAmber
 import com.rork.plcpanelstudio.ui.theme.SignalGreen
 import com.rork.plcpanelstudio.ui.theme.SignalOrange
@@ -687,6 +688,9 @@ fun HardwareUnit(
         Text(
             text = if (forced) "FORCED · $caption" else caption,
             style = MaterialTheme.typography.bodySmall,
+            // The caption is the part's address (e.g. I3.2); it lights up when the bit is 1.
+            fontFamily = MonoFamily,
+            fontSize = 11.sp,
             color = if (forced) SignalOrange else if (active) glowColorFor(kind) else TextLow,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
